@@ -25,10 +25,10 @@ def createVideo(audioPath: str, videoPath: str, finalPath: str) -> bool:
         logging.info("Видео успешно собрано: %s", finalPath)
     except:
         result = False
-    # finally:
-    #     if os.path.exists(audioPath):
-    #         os.remove(audioPath)
-    #         logging.info("Временный аудиофайл удалён: %s", audioPath)
+    finally:
+        if os.path.exists(audioPath):
+            os.remove(audioPath)
+            logging.info("Временный аудиофайл удалён:  %s", audioPath)
     
     return result
 

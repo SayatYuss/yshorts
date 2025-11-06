@@ -11,6 +11,6 @@ videoPath = "tmp/video_for.mp4"
 text = getDescVideo(videoPath)
 audioPath = convertToMp3(text)
 final_fileName = str(int(time.time()))
-finalPath = f"video_{final_fileName}.mp4"
+finalPath = f"results/video_{final_fileName}.mp4"
 
 created = createVideo(audioPath, videoPath, finalPath)
