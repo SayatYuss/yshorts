@@ -1,0 +1,4 @@
+python-telegram-bot
+elevenlabs
+google-generativeai
+python-dotenv
