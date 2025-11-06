@@ -1,4 +1,4 @@
 python-telegram-bot
 elevenlabs
-google-generativeai
+google-genai
 python-dotenv
