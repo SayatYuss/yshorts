@@ -1,14 +1,14 @@
 import logging
 import os
-import time
+import asyncio
 from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from aiogram import Bot, Dispatcher, Router, types, F
+from aiogram.filters import Command
+from aiogram.types import Message, FSInputFile
 
-# Импортируем ваши функции
-from src.convertToMp3 import convertToMp3
-from src.textFromVideo import getDescVideo
-from src.createVideo import createVideo
+# --- НОВЫЙ ИМПОРТ ---
+# Импортируем ваш новый класс пайплайна
+from src.pipeline import VideoPipeline 
 
 # --- Настройка ---
 load_dotenv()
@@ -20,102 +20,70 @@ logger = logging.getLogger(__name__)
 # Получаем токен из .env
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN:
-    logger.error("TELEGRAM_BOT_TOKEN не найден в .env файле!")
+    logger.error("TELEGRAM_BOT_TOKEN не найден в .env file!")
     exit()
 
-# Убедимся, что папки существуют
+# Папки теперь создаются внутри VideoPipeline,
+# но на всякий случай оставим проверку и здесь.
 os.makedirs("tmp", exist_ok=True)
 os.makedirs("results", exist_ok=True)
 
+# --- Обработчики Бота (Aiogram) ---
 
-async def process_video_pipeline(video_path: str) -> (str | None, dict | None):
-    """
-    Запускает полный пайплайн обработки видео.
-    Возвращает (path_to_final_video, text_data) или (None, None) в случае ошибки.
-    """
-    try:
-        logger.info(f"Начинаю обработку видео: {video_path}")
-        
-        # 1. Получаем текст из видео
-        text_data = getDescVideo(video_path)  # Это dict {"title": "...", "content": "..."}
-        if not text_data or not text_data.get("content"):
-            logger.error(f"Не удалось получить текст из видео: {text_data}")
-            return None, None
-        
-        logger.info(f"Получен текст: {text_data.get('title', 'Без заголовка')}")
+router = Router()
 
-        # 2. Конвертируем текст в аудио
-        audio_path = convertToMp3(text_data["content"])
-        if not audio_path:
-            logger.error("Не удалось сгенерировать аудио.")
-            return None, text_data
-
-        logger.info(f"Аудио сгенерировано: {audio_path}")
-
-        # 3. Создаем финальное видео
-        final_file_name = str(int(time.time()))
-        final_path = f"results/video_{final_file_name}.mp4"
-        
-        created = createVideo(audio_path, video_path, final_path)
-        
-        if created:
-            logger.info(f"Видео успешно создано: {final_path}")
-            return final_path, text_data
-        else:
-            logger.error("Не удалось собрать финальное видео.")
-            return None, text_data
-    
-    except Exception as e:
-        logger.error(f"Критическая ошибка в пайплайне: {e}", exc_info=True)
-        return None, None
-
-# --- Обработчики Бота ---
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(Command("start"))
+async def start_handler(message: Message):
     """Отправляет приветственное сообщение."""
-    await update.message.reply_text(
+    await message.answer(
         "Привет! 👋\n"
         "Отправь мне видео, и я добавлю к нему закадровый голос, "
         "сгенерированный ИИ на основе содержания."
     )
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@router.message(F.video)
+async def handle_video(message: Message, bot: Bot, pipeline: VideoPipeline): # <-- 3. Получаем pipeline
     """Обрабатывает полученное видео."""
-    if not update.message.video:
-        await update.message.reply_text("Пожалуйста, отправьте видеофайл.")
+    if not message.video:
+        await message.answer("Пожалуйста, отправьте видеофайл.")
         return
 
-    video_file = update.message.video
+    video_file = message.video
     input_video_path = f"tmp/input_{video_file.file_id}.mp4"
     
-    await update.message.reply_text("Видео получено. Начинаю обработку... 🤖\nЭто может занять несколько минут.")
+    await message.answer("Видео получено. Начинаю обработку... 🤖\nЭто может занять несколько минут.")
 
     try:
         # 1. Скачиваем видео
         logger.info(f"Скачиваю видео: {video_file.file_id}")
-        file = await video_file.get_file()
-        await file.download_to_drive(input_video_path)
+        file_info = await bot.get_file(video_file.file_id)
+        await bot.download_file(file_info.file_path, destination=input_video_path)
         logger.info(f"Видео сохранено: {input_video_path}")
 
         # 2. Запускаем пайплайн
-        final_path, text_data = await process_video_pipeline(input_video_path)
+        # --- ИЗМЕНЕНИЕ ---
+        # Вызываем асинхронный метод из вашего класса
+        final_path, text_data = await pipeline.run_async(input_video_path)
 
         # 3. Отправляем результат
         if final_path and text_data:
             logger.info(f"Отправляю готовое видео: {final_path}")
             caption = text_data.get('title', 'Ваше видео готово!')
-            with open(final_path, 'rb') as video_data:
-                await update.message.reply_video(video=video_data, caption=caption)
+            
+            await message.answer_video(
+                video=FSInputFile(final_path), 
+                caption=caption
+            )
         else:
             logger.error("Пайплайн не вернул результат.")
-            await update.message.reply_text(
+            await message.answer(
                 "Произошла ошибка при обработке видео. 😢\n"
                 "Попробуйте еще раз или проверьте логи."
             )
 
     except Exception as e:
         logger.error(f"Ошибка в handle_video: {e}", exc_info=True)
-        await update.message.reply_text("Произошла критическая ошибка. 🤯")
+        await message.answer("Произошла критическая ошибка. 🤯")
     
     finally:
         # 4. Очистка
@@ -126,23 +94,34 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(final_path)
             logger.info(f"Удален финальный файл: {final_path}")
 
-def main():
+@router.message()
+async def handle_other_messages(message: Message):
+    """Обработчик для всех других типов сообщений."""
+    await message.reply("Пожалуйста, отправьте мне видеофайл.")
+
+# --- Функция Запуска ---
+
+async def main():
     """Запуск бота."""
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # Добавляем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.VIDEO, handle_video))
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
     
-    # Добавляем обработчик для не-видео сообщений
-    application.add_handler(MessageHandler(
-        ~filters.VIDEO & ~filters.COMMAND, 
-        lambda u, c: u.message.reply_text("Пожалуйста, отправьте мне видеофайл."))
-    )
-
+    # --- ИЗМЕНЕНИЕ ---
+    # 1. Создаем один экземпляр пайплайна
+    pipeline_instance = VideoPipeline()
+    
+    # 2. Передаем его в Dispatcher при инициализации
+    # Он станет доступен во всех хэндлерах по имени аргумента "pipeline"
+    dp = Dispatcher(pipeline=pipeline_instance)
+    
+    dp.include_router(router)
+    
     logger.info("Бот запускается...")
-    application.run_polling()
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен вручную.")
