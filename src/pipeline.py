@@ -327,8 +327,7 @@ class VideoPipeline:
             
             # vf (video filter) "subtitles" вжигает субтитры
             # Добавляем стиль: тень/обводка для читаемости
-            "-vf", f"subtitles={srt_path_escaped}:force_style='OutlineColour=&H40000000,BorderStyle=4,Shadow=1,MarginV=15'",
-            
+            "-vf", f"subtitles={srt_path_escaped}:force_style='FontName=Arial,FontSize=18,PrimaryColour=&HFFFFFF,BorderStyle=3,BackColour=&H80000000,Shadow=0,MarginV=25'",            
             "-c:v", "libx264",   # Перекодируем видео (обязательно для вжигания)
             "-crf", "23",        # Качество (18-28, чем ниже, тем лучше)
             "-preset", "fast",   # Скорость кодирования (ultrafast, superfast, fast, medium)
